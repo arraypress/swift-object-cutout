@@ -117,10 +117,17 @@ public final class SAM2Segmenter: @unchecked Sendable {
             return ctx.makeImage()
         }) else { return nil }
 
-        let sx = extent.width / CGFloat(side), sy = extent.height / CGFloat(side)
-        return CIImage(cgImage: cg)
-            .transformed(by: CGAffineTransform(scaleX: sx, y: sy))
-            .transformed(by: CGAffineTransform(translationX: extent.minX, y: extent.minY))
+        // Smooth Lanczos upscale from the model's 256² mask to the frame — a
+        // plain affine scale leaves visible stair-steps.
+        let base = CIImage(cgImage: cg)
+        let scale = extent.height / CGFloat(side)
+        let aspect = extent.width / extent.height
+        let up = base.applyingFilter("CILanczosScaleTransform", parameters: [
+            "inputScale": scale, "inputAspectRatio": aspect,
+        ])
+        return up
+            .transformed(by: CGAffineTransform(translationX: extent.minX - up.extent.minX,
+                                               y: extent.minY - up.extent.minY))
             .cropped(to: extent)
     }
 }

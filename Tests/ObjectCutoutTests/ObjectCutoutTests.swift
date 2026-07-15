@@ -41,4 +41,25 @@ struct ObjectCutoutTests {
                                        format: .RGBA8, colorSpace: CGColorSpaceCreateDeviceRGB())
         print("WROTE ~/Downloads/sam2_cutout.png")
     }
+
+    @Test("Track an object across frames",
+          .enabled(if: ProcessInfo.processInfo.environment["SAM2_RENDER"] != nil))
+    func trackObject() async throws {
+        guard let dir = env("SAM2_DIR") else { print("[skip]"); return }
+        let base = URL(fileURLWithPath: dir)
+        let seg = try SAM2Segmenter(
+            encoderURL: base.appendingPathComponent("SAM2_1TinyImageEncoderFLOAT16.mlpackage"),
+            promptEncoderURL: base.appendingPathComponent("SAM2_1TinyPromptEncoderFLOAT16.mlpackage"),
+            decoderURL: base.appendingPathComponent("SAM2_1TinyMaskDecoderFLOAT16.mlpackage"))
+        let video = URL(fileURLWithPath: env("SAM2_VIDEO") ?? (NSHomeDirectory() + "/Downloads/body_test.mp4"))
+        guard FileManager.default.fileExists(atPath: video.path) else { print("[skip] no video"); return }
+
+        let track = try await SAM2VideoTracker.track(videoURL: video, startPoint: CGPoint(x: 0.5, y: 0.42), using: seg, fps: 1.5)
+        print("TRACK \(track.count) frames; first center \(track.first?.center ?? .zero), last \(track.last?.center ?? .zero)")
+        #expect(track.count >= 2)
+        // The object stays roughly centered (didn't drift off to a corner).
+        if let c = track.last?.center {
+            #expect(c.x > 0.2 && c.x < 0.8 && c.y > 0.1 && c.y < 0.9, "track drifted: \(c)")
+        }
+    }
 }

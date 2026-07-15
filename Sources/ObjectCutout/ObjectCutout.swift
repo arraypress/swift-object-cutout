@@ -28,15 +28,19 @@ public struct ObjectCutout: Sendable {
         public let bounds: CGRect
     }
 
-    /// Cuts out the object at `point` (normalized `0…1`, top-left).
-    public func cutout(from image: CIImage, at point: CGPoint, feather: CGFloat = 1.5) -> Result? {
+    /// Cuts out the object at `point` (normalized `0…1`, top-left). `feather`
+    /// `nil` = auto (scaled to the frame so the 256² mask edge reads smooth).
+    public func cutout(from image: CIImage, at point: CGPoint, feather: CGFloat? = nil) -> Result? {
         guard var mask = segmenter.mask(for: image, at: point) else { return nil }
         let extent = image.extent
         let bounds = contentBounds(of: mask, extent: extent) ?? extent
 
-        if feather > 0 {
+        // Auto feather ~ one model-mask-pixel at frame resolution — enough to
+        // blend the upscaled edge without eating the object.
+        let radius = feather ?? max(1.5, extent.width / 256 * 1.2)
+        if radius > 0 {
             mask = mask.clampedToExtent()
-                .applyingFilter("CIGaussianBlur", parameters: ["inputRadius": feather])
+                .applyingFilter("CIGaussianBlur", parameters: ["inputRadius": radius])
                 .cropped(to: extent)
         }
         let clear = CIImage(color: CIColor(red: 0, green: 0, blue: 0, alpha: 0)).cropped(to: extent)
