@@ -72,7 +72,7 @@ public enum SAM2VideoTracker {
     }
 
     /// Centroid + tight bounds (normalized, top-left) of a mask, via a low-res scan.
-    static func analyze(mask: CIImage, extent: CGRect) -> (center: CGPoint, bounds: CGRect)? {
+    public static func analyze(mask: CIImage, extent: CGRect) -> (center: CGPoint, bounds: CGRect)? {
         let side = 128
         var buf = [UInt8](repeating: 0, count: side * side * 4)
         let scaled = mask

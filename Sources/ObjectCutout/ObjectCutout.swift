@@ -31,7 +31,14 @@ public struct ObjectCutout: Sendable {
     /// Cuts out the object at `point` (normalized `0…1`, top-left). `feather`
     /// `nil` = auto (scaled to the frame so the 256² mask edge reads smooth).
     public func cutout(from image: CIImage, at point: CGPoint, feather: CGFloat? = nil) -> Result? {
-        guard var mask = segmenter.mask(for: image, at: point) else { return nil }
+        guard let mask = segmenter.mask(for: image, at: point) else { return nil }
+        return cutout(from: image, mask: mask, feather: feather)
+    }
+
+    /// Cuts out using an already-computed `mask` (avoids a second segmentation
+    /// when the caller also needs the mask, e.g. for a track centroid).
+    public func cutout(from image: CIImage, mask maskInput: CIImage, feather: CGFloat? = nil) -> Result? {
+        var mask = maskInput
         let extent = image.extent
         let bounds = contentBounds(of: mask, extent: extent) ?? extent
 
