@@ -57,19 +57,35 @@ public enum SAM2VideoTracker {
 
         var frames: [ObjectTrackFrame] = []
         var point = startPoint
+        var misses = 0
         for (i, t) in times.enumerated() {
             guard let cg = try? generator.copyCGImage(at: CMTime(seconds: t, preferredTimescale: 600), actualTime: nil)
             else { continue }
             let image = CIImage(cgImage: cg)
-            guard let mask = segmenter.mask(for: image, at: point),
-                  let (center, bounds) = analyze(mask: mask, extent: image.extent)
-            else { continue }
-            frames.append(ObjectTrackFrame(time: t, center: center, bounds: bounds))
-            point = center                       // ride the centroid into the next frame
+            // Loss detection: without it, when the object leaves frame or is
+            // occluded the propagated point lands on BACKGROUND, SAM segments
+            // something there, and the track rides it confidently wrong.
+            // Reject low-confidence masks and implausible centroid jumps;
+            // after a couple of consecutive misses, the object is gone — stop.
+            if let (mask, score) = segmenter.maskWithScore(for: image, at: point),
+               score >= 0.5,
+               let (center, bounds) = analyze(mask: mask, extent: image.extent),
+               frames.isEmpty || hypot(center.x - point.x, center.y - point.y) < 0.35 {
+                frames.append(ObjectTrackFrame(time: t, center: center, bounds: bounds))
+                point = center                   // ride the centroid into the next frame
+                misses = 0
+            } else {
+                misses += 1
+                if misses > 2 { break }          // lost — end the track cleanly
+            }
             progress?(Double(i + 1) / Double(times.count))
         }
         return smoothed(frames)
     }
+
+    /// One context for every analyze() call — a fresh CIContext per tracked
+    /// frame was a new Metal pipeline cache 4×/sec.
+    private static let analyzeContext = CIContext(options: [.cacheIntermediates: false])
 
     /// Centroid + tight bounds (normalized, top-left) of a mask, via a low-res scan.
     public static func analyze(mask: CIImage, extent: CGRect) -> (center: CGPoint, bounds: CGRect)? {
@@ -78,7 +94,7 @@ public enum SAM2VideoTracker {
         let scaled = mask
             .transformed(by: CGAffineTransform(translationX: -extent.minX, y: -extent.minY))
             .transformed(by: CGAffineTransform(scaleX: CGFloat(side) / extent.width, y: CGFloat(side) / extent.height))
-        CIContext().render(scaled, toBitmap: &buf, rowBytes: side * 4,
+        analyzeContext.render(scaled, toBitmap: &buf, rowBytes: side * 4,
                            bounds: CGRect(x: 0, y: 0, width: side, height: side),
                            format: .RGBA8, colorSpace: CGColorSpaceCreateDeviceRGB())
         var minX = side, minY = side, maxX = -1, maxY = -1, sumX = 0, sumY = 0, n = 0

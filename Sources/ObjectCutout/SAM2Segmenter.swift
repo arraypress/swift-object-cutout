@@ -38,6 +38,12 @@ public final class SAM2Segmenter: @unchecked Sendable {
     /// Returns a soft grayscale mask (`CIImage`, white = object) at the image's
     /// extent, or `nil` on failure.
     public func mask(for image: CIImage, at point: CGPoint) -> CIImage? {
+        maskWithScore(for: image, at: point)?.mask
+    }
+
+    /// Like ``mask(for:at:)`` but also returns the decoder's confidence
+    /// (predicted mask IoU) — trackers use it to detect a lost object.
+    public func maskWithScore(for image: CIImage, at point: CGPoint) -> (mask: CIImage, score: Float)? {
         let extent = image.extent
         guard extent.width > 0, extent.height > 0 else { return nil }
         let N = Self.inputSize
@@ -78,7 +84,8 @@ public final class SAM2Segmenter: @unchecked Sendable {
             if s > bestScore { bestScore = s; best = i }
         }
         if ProcessInfo.processInfo.environment["SAM2_DEBUG"] != nil { print("SAM2 scores \(all) best=\(best)") }
-        return maskImage(from: masks, index: best, extent: extent)
+        guard let image = maskImage(from: masks, index: best, extent: extent) else { return nil }
+        return (image, bestScore)
     }
 
     // MARK: - Helpers
@@ -100,14 +107,35 @@ public final class SAM2Segmenter: @unchecked Sendable {
     private func maskImage(from masks: MLMultiArray, index: Int, extent: CGRect) -> CIImage? {
         let side = masks.shape[2].intValue       // 256
         var bytes = [UInt8](repeating: 0, count: side * side)
-        for y in 0..<side {
-            for x in 0..<side {
-                let logit = masks[[0, NSNumber(value: index), NSNumber(value: y), NSNumber(value: x)]].floatValue
-                // Ramp from the decision boundary up — excludes the ambiguous
-                // near-zero region (deconv checkerboard) that a soft sigmoid
-                // would show as speckle, while keeping a soft object edge.
-                let p = max(0, min(1, logit * 0.6))
-                bytes[y * side + x] = UInt8(p * 255)
+        // Typed buffer read honoring strides — the boxed subscript did 65k
+        // NSNumber round-trips per mask (tens of ms of pure CPU on the
+        // tracking path). Ramp from the decision boundary up — excludes the
+        // ambiguous near-zero region (deconv checkerboard) that a soft sigmoid
+        // would show as speckle, while keeping a soft object edge.
+        let sChan = masks.strides[1].intValue, sRow = masks.strides[2].intValue, sCol = masks.strides[3].intValue
+        let chanBase = index * sChan
+        func fill(_ logitAt: (Int) -> Float) {
+            for y in 0..<side {
+                let rowBase = chanBase + y * sRow
+                for x in 0..<side {
+                    let p = max(0, min(1, logitAt(rowBase + x * sCol) * 0.6))
+                    bytes[y * side + x] = UInt8(p * 255)
+                }
+            }
+        }
+        switch masks.dataType {
+        case .float32:
+            let ptr = masks.dataPointer.bindMemory(to: Float32.self, capacity: masks.count)
+            fill { Float(ptr[$0]) }
+        case .float16:
+            let ptr = masks.dataPointer.bindMemory(to: Float16.self, capacity: masks.count)
+            fill { Float(ptr[$0]) }
+        default:
+            for y in 0..<side {
+                for x in 0..<side {
+                    let logit = masks[[0, NSNumber(value: index), NSNumber(value: y), NSNumber(value: x)]].floatValue
+                    bytes[y * side + x] = UInt8(max(0, min(1, logit * 0.6)) * 255)
+                }
             }
         }
         guard let cg = bytes.withUnsafeMutableBytes({ ptr -> CGImage? in

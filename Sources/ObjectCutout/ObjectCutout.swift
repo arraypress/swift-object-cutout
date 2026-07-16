@@ -40,11 +40,16 @@ public struct ObjectCutout: Sendable {
     public func cutout(from image: CIImage, mask maskInput: CIImage, feather: CGFloat? = nil) -> Result? {
         var mask = maskInput
         let extent = image.extent
-        let bounds = contentBounds(of: mask, extent: extent) ?? extent
-
         // Auto feather ~ one model-mask-pixel at frame resolution — enough to
         // blend the upscaled edge without eating the object.
         let radius = feather ?? max(1.5, extent.width / 256 * 1.2)
+        // Bounds from the pre-feather mask, outset by the feather (plus one
+        // 128-scan cell) — a sticker cropped to the old "tight" rect clipped
+        // its own soft edge.
+        let scanCell = max(extent.width, extent.height) / 128
+        let bounds = (contentBounds(of: maskInput, extent: extent) ?? extent)
+            .insetBy(dx: -(radius + scanCell), dy: -(radius + scanCell))
+            .intersection(extent)
         if radius > 0 {
             mask = mask.clampedToExtent()
                 .applyingFilter("CIGaussianBlur", parameters: ["inputRadius": radius])
