@@ -24,3 +24,19 @@ Requirements: macOS 26 / iOS 26, Swift 6.2.
 MIT — see [LICENSE](LICENSE).
 
 Bundled or downloaded models keep their own licences; see the notes above where a model is named.
+## Built-in mattes — no models, no click
+
+`Matte` uses the segmentation models the OS ships: `personMask` /
+`cutout(from:mode:.person)` mattes every human in the frame whole (the
+remove-the-background case a torso click answers wrongly — it returns
+the garment), and `.subject` lifts whatever the system judges salient.
+Both share the click path's edge treatment, and neither needs the SAM
+models.
+
+```swift
+if let r = try Matte.cutout(from: image, mode: .person) {
+    let figure = r.image.cropped(to: r.bounds)
+}
+```
+
+
