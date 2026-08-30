@@ -62,4 +62,21 @@ struct ObjectCutoutTests {
             #expect(c.x > 0.2 && c.x < 0.8 && c.y > 0.1 && c.y < 0.9, "track drifted: \(c)")
         }
     }
+
+    /// The built-in mattes: a person photo yields a whole figure (not a
+    /// garment), the subject lift finds the same figure, and a flat image
+    /// yields nobody. Gated on a local stock photo; skips elsewhere.
+    @Test func personAndSubjectMattesTakeWholeFigures() throws {
+        let photo = URL(fileURLWithPath: ("~/Downloads/stock-people/businesswoman-walking.jpg" as NSString).expandingTildeInPath)
+        guard FileManager.default.fileExists(atPath: photo.path) else { return }   // needs the local stock photo
+        let image = try #require(CIImage(contentsOf: photo))
+        let person = try #require(try Matte.cutout(from: image, mode: .person))
+        #expect(person.bounds.height > image.extent.height * 0.5, "a whole person, not a garment")
+        let mask = try #require(try Matte.personMask(for: image))
+        #expect(mask.extent == image.extent)
+        let subject = try #require(try Matte.cutout(from: image, mode: .subject))
+        #expect(subject.bounds.height > image.extent.height * 0.4)
+        let flat = CIImage(color: CIColor(red: 0.5, green: 0.5, blue: 0.5)).cropped(to: CGRect(x: 0, y: 0, width: 256, height: 256))
+        #expect(try Matte.personMask(for: flat) == nil, "a flat grey has no person in it")
+    }
 }

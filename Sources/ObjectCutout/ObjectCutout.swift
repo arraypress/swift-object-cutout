@@ -38,6 +38,20 @@ public struct ObjectCutout: Sendable {
     /// Cuts out using an already-computed `mask` (avoids a second segmentation
     /// when the caller also needs the mask, e.g. for a track centroid).
     public func cutout(from image: CIImage, mask maskInput: CIImage, feather: CGFloat? = nil) -> Result? {
+        MaskComposite.cutout(from: image, mask: maskInput, feather: feather, context: ciContext)
+    }
+
+        /// The tight bounds of the mask's content, found by scanning a small render.
+}
+
+// MARK: - The shared mask-to-cutout pipeline
+
+/// One edge treatment for every mask, wherever the mask came from — the SAM
+/// click, the person matte or the subject lift. Split out so the matte path
+/// needs no segmenter (and so the two paths cannot drift apart).
+enum MaskComposite {
+
+    static func cutout(from image: CIImage, mask maskInput: CIImage, feather: CGFloat?, context ciContext: CIContext) -> ObjectCutout.Result? {
         var mask = maskInput
         let extent = image.extent
         // Auto feather ~ one model-mask-pixel at frame resolution — enough to
@@ -47,7 +61,7 @@ public struct ObjectCutout: Sendable {
         // 128-scan cell) — a sticker cropped to the old "tight" rect clipped
         // its own soft edge.
         let scanCell = max(extent.width, extent.height) / 128
-        let bounds = (contentBounds(of: maskInput, extent: extent) ?? extent)
+        let bounds = (contentBounds(of: maskInput, extent: extent, context: ciContext) ?? extent)
             .insetBy(dx: -(radius + scanCell), dy: -(radius + scanCell))
             .intersection(extent)
         if radius > 0 {
@@ -59,11 +73,11 @@ public struct ObjectCutout: Sendable {
         let cut = image.applyingFilter("CIBlendWithMask", parameters: [
             "inputBackgroundImage": clear, "inputMaskImage": mask,
         ]).cropped(to: extent)
-        return Result(image: cut, bounds: bounds)
+        return ObjectCutout.Result(image: cut, bounds: bounds)
     }
 
     /// The tight bounds of the mask's content, found by scanning a small render.
-    private func contentBounds(of mask: CIImage, extent: CGRect) -> CGRect? {
+    static func contentBounds(of mask: CIImage, extent: CGRect, context ciContext: CIContext) -> CGRect? {
         let side = 128
         var buf = [UInt8](repeating: 0, count: side * side * 4)
         let scaled = mask
