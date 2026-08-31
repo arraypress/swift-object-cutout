@@ -79,4 +79,42 @@ struct ObjectCutoutTests {
         let flat = CIImage(color: CIColor(red: 0.5, green: 0.5, blue: 0.5)).cropped(to: CGRect(x: 0, y: 0, width: 256, height: 256))
         #expect(try Matte.personMask(for: flat) == nil, "a flat grey has no person in it")
     }
+
+    /// A synthetic square cutout gains a contour outline just outside its
+    /// edge, a shadow below, transparency in the corners, and lands centred
+    /// on a square canvas when asked. Deterministic — no models.
+    @Test func stickerDressesACutout() throws {
+        let rect = CGRect(x: 64, y: 64, width: 128, height: 128)
+        let full = CGRect(x: 0, y: 0, width: 256, height: 256)
+        let red = CIImage(color: CIColor(red: 1, green: 0, blue: 0)).cropped(to: rect)
+        let clear = CIImage(color: .clear).cropped(to: full)
+        let cutout = ObjectCutout.Result(image: red.composited(over: clear), bounds: rect)
+
+        let sticker = Sticker.make(from: cutout, options: Sticker.Options(border: 10, shadow: true))
+        let context = CIContext()
+        let w = Int(sticker.extent.width), h = Int(sticker.extent.height)
+        var buf = [UInt8](repeating: 0, count: w * h * 4)
+        context.render(sticker, toBitmap: &buf, rowBytes: w * 4, bounds: sticker.extent,
+                       format: .RGBA8, colorSpace: CGColorSpaceCreateDeviceRGB())
+        func px(_ x: Int, _ y: Int) -> (r: UInt8, g: UInt8, b: UInt8, a: UInt8) {
+            let i = ((h - 1 - y) * w + x) * 4   // bitmap rows are top-down; probe in bottom-left coords
+            return (buf[i], buf[i + 1], buf[i + 2], buf[i + 3])
+        }
+        let margin = (sticker.extent.width - rect.width) / 2
+        let cx = w / 2
+        // Centre: the figure itself.
+        let centre = px(cx, h / 2)
+        #expect(centre.r > 200 && centre.a > 200, "the figure survives dressing")
+        // Just outside the figure's left edge: the white outline.
+        let rim = px(Int(margin) - 4, h / 2)
+        #expect(rim.r > 200 && rim.g > 200 && rim.b > 200 && rim.a > 200, "outline missing: \(rim)")
+        // The very corner: transparent.
+        #expect(px(1, h - 2).a < 10, "corners must stay clear")
+        // Just under the outline ring: shadow alpha.
+        let below = px(cx, Int(margin) - 10 - 3)
+        #expect(below.a > 5 && below.r < 120, "shadow missing below: \(below)")
+
+        let square = Sticker.make(from: cutout, options: Sticker.Options(border: 10, shadow: true, size: 512))
+        #expect(square.extent == CGRect(x: 0, y: 0, width: 512, height: 512))
+    }
 }
