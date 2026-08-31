@@ -55,8 +55,8 @@ public enum Sticker {
     /// The cutout as a sticker, cropped to its own canvas (origin zero).
     public static func make(from cutout: ObjectCutout.Result, options: Options = Options()) -> CIImage {
         let border = CGFloat(max(0, options.border))
-        let shadowBlur = options.shadow ? max(3, border * 0.75) : 0
-        let shadowDrop = options.shadow ? max(2, border * 0.5) : 0
+        let shadowBlur = options.shadow ? max(2, border * 0.4) : 0
+        let shadowDrop = options.shadow ? max(3, border * 0.7) : 0
 
         // Room for the outline all round and the shadow below.
         let margin = border + shadowBlur * 2 + shadowDrop
@@ -77,10 +77,16 @@ public enum Sticker {
 
         var layers: [CIImage] = []
         if options.shadow {
+            // The shadow hangs off the RIM, not the figure, and drops DOWN —
+            // dilating from the figure and blurring wide read as a halo
+            // around the whole sticker, which is what "blurred edges" looks
+            // like. Same binarised base as the outline, modest blur, real
+            // offset: a shadow, not a glow.
             let shadowMask = mask
-                .applyingFilter("CIMorphologyMaximum", parameters: ["inputRadius": border * 0.6])
+                .applyingFilter("CIColorThreshold", parameters: ["inputThreshold": 0.35])
+                .applyingFilter("CIMorphologyMaximum", parameters: ["inputRadius": border])
                 .applyingFilter("CIGaussianBlur", parameters: ["inputRadius": shadowBlur])
-            let ink = CIImage(color: CIColor(red: 0, green: 0, blue: 0, alpha: 0.35)).cropped(to: canvas)
+            let ink = CIImage(color: CIColor(red: 0, green: 0, blue: 0, alpha: 0.30)).cropped(to: canvas)
             let clear = CIImage(color: .clear).cropped(to: canvas)
             let shadow = ink.applyingFilter("CIBlendWithMask", parameters: [
                 "inputBackgroundImage": clear, "inputMaskImage": shadowMask,
@@ -88,7 +94,14 @@ public enum Sticker {
             layers.append(shadow.cropped(to: canvas))
         }
         if border > 0 {
-            let rim = mask.applyingFilter("CIMorphologyMaximum", parameters: ["inputRadius": border])
+            // A real sticker outline is SOLID: the figure's soft matte edge
+            // must not leak into the rim, so the mask is binarised first,
+            // dilated hard, and given one pixel of blur purely as
+            // anti-aliasing — never softness.
+            let rim = mask
+                .applyingFilter("CIColorThreshold", parameters: ["inputThreshold": 0.35])
+                .applyingFilter("CIMorphologyMaximum", parameters: ["inputRadius": border])
+                .applyingFilter("CIGaussianBlur", parameters: ["inputRadius": 1.0])
             let paint = CIImage(color: options.borderColor.ciColor).cropped(to: canvas)
             let clear = CIImage(color: .clear).cropped(to: canvas)
             let outline = paint.applyingFilter("CIBlendWithMask", parameters: [

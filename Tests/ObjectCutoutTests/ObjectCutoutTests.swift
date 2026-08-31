@@ -105,9 +105,13 @@ struct ObjectCutoutTests {
         // Centre: the figure itself.
         let centre = px(cx, h / 2)
         #expect(centre.r > 200 && centre.a > 200, "the figure survives dressing")
-        // Just outside the figure's left edge: the white outline.
+        // Just outside the figure's left edge: the white outline, SOLID.
         let rim = px(Int(margin) - 4, h / 2)
-        #expect(rim.r > 200 && rim.g > 200 && rim.b > 200 && rim.a > 200, "outline missing: \(rim)")
+        #expect(rim.r > 245 && rim.g > 245 && rim.b > 245 && rim.a > 245, "outline not solid: \(rim)")
+        // Two pixels beyond the rim's outer edge: already clear — the
+        // outline ends crisply, it does not fade.
+        let past = px(Int(margin) - 10 - 4, h / 2)
+        #expect(past.a < 40, "outline fades instead of ending: \(past)")
         // The very corner: transparent.
         #expect(px(1, h - 2).a < 10, "corners must stay clear")
         // Just under the outline ring: shadow alpha.
