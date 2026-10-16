@@ -12,6 +12,10 @@
 //  one whole — a click on a torso returns the garment, a person matte
 //  returns the person.
 //
+//  1.4: the subject comes from the downloaded model (BiRefNet on Core AI)
+//  wherever it is installed and the OS can run it, and from Vision
+//  otherwise — `MatteEngine` chooses explicitly.
+//
 
 import CoreImage
 import CoreVideo
@@ -29,8 +33,33 @@ public enum Matte {
     }
 
     /// A soft mask of every person in the image, scaled to the image's
-    /// extent, or `nil` when Vision finds nobody.
-    public static func personMask(for image: CIImage) throws -> CIImage? {
+    /// extent, or `nil` when nobody is found.
+    ///
+    /// - Parameter engine: ``MatteEngine/automatic`` (the default): where
+    ///   the downloaded model is installed, its edge kept where Vision's
+    ///   person segmentation finds people (``gated(_:byPeople:extent:)``);
+    ///   elsewhere Vision's person mask alone.
+    public static func personMask(for image: CIImage, engine: MatteEngine = .automatic) throws -> CIImage? {
+        guard let people = try visionPersonMask(for: image) else { return nil }
+        if #available(macOS 27, iOS 27, *), try usesModel(engine) {
+            let url = SubjectModel.installedURL
+            let modelled = try Blocking.run { try await SubjectMatter.shared(at: url).mask(for: image) }
+            return nonEmpty(gated(modelled, byPeople: people, extent: image.extent), extent: image.extent)
+        }
+        return people
+    }
+
+    /// The subject model's mask kept only where `people` (Vision's person
+    /// mask) finds people, grown by 5 % of the short side and softened: the
+    /// model's edge, Vision's choice of what counts. SAD 7.5 on AIM-500
+    /// portraits, against 24.9 for Vision's person mask with the crisp edge.
+    public static func gated(_ modelMask: CIImage, byPeople people: CIImage, extent: CGRect) -> CIImage {
+        PersonGate.apply(model: modelMask, person: people, extent: extent, context: context)
+    }
+
+    /// Vision's person segmentation (accurate), scaled to the image's
+    /// extent, or `nil` when it finds nobody.
+    public static func visionPersonMask(for image: CIImage) throws -> CIImage? {
         let request = VNGeneratePersonSegmentationRequest()
         request.qualityLevel = .accurate
         request.outputPixelFormat = kCVPixelFormatType_OneComponent8
@@ -44,9 +73,47 @@ public enum Matte {
         return mask
     }
 
-    /// A full-resolution mask of the salient subject(s), or `nil` when the
-    /// system lifts nothing.
-    public static func subjectMask(for image: CIImage) throws -> CIImage? {
+    /// A full-resolution soft mask of the salient subject(s), or `nil` when
+    /// nothing is lifted.
+    ///
+    /// - Parameter engine: ``MatteEngine/automatic`` (the default) uses the
+    ///   downloaded model where it is installed and Vision elsewhere.
+    /// - Throws: ``MatteError`` when the model is asked for (or installed)
+    ///   and cannot run; Vision's errors as they come.
+    public static func subjectMask(for image: CIImage, engine: MatteEngine = .automatic) throws -> CIImage? {
+        if #available(macOS 27, iOS 27, *), try usesModel(engine) {
+            let url = SubjectModel.installedURL
+            let mask = try Blocking.run { try await SubjectMatter.shared(at: url).mask(for: image) }
+            return nonEmpty(mask, extent: image.extent)
+        }
+        return try visionSubjectMask(for: image)
+    }
+
+    /// Whether `engine` puts the subject to the downloaded model here.
+    ///
+    /// - Throws: ``MatteError/modelUnavailable(_:)`` when the model is asked
+    ///   for by name and is not installed, or the OS cannot run it.
+    public static func usesModel(_ engine: MatteEngine) throws(MatteError) -> Bool {
+        let runs: Bool
+        if #available(macOS 27, iOS 27, *) { runs = true } else { runs = false }
+        switch engine {
+        case .vision: return false
+        case .automatic: return runs && SubjectModel.isInstalled
+        case .model:
+            guard runs else { throw .modelUnavailable("the subject model runs on Core AI: macOS 27 or iOS 27") }
+            guard SubjectModel.isInstalled else { throw .modelUnavailable("not installed at \(SubjectModel.installedURL.path)") }
+            return true
+        }
+    }
+
+    /// `mask`, or `nil` when nothing in it reaches half-on.
+    public static func nonEmpty(_ mask: CIImage, extent: CGRect) -> CIImage? {
+        MaskComposite.contentBounds(of: mask, extent: extent, context: context) == nil ? nil : mask
+    }
+
+    /// Vision's mask of the salient subject(s), full resolution, or `nil`
+    /// when it lifts nothing.
+    public static func visionSubjectMask(for image: CIImage) throws -> CIImage? {
         let request = VNGenerateForegroundInstanceMaskRequest()
         let handler = VNImageRequestHandler(ciImage: image)
         try handler.perform([request])
@@ -57,14 +124,24 @@ public enum Matte {
 
     /// The matte as a cutout — the same edge treatment as the click path,
     /// so a person matte and a SAM sticker read as one tool's work.
-    public static func cutout(from image: CIImage, mode: Mode, edge: EdgeOptions = .crisp) throws -> ObjectCutout.Result? {
+    ///
+    /// When the downloaded model lifts the subject, `.crisp` is taken as
+    /// ``EdgeOptions/forModel(_:)`` says — its own alpha, decontaminated —
+    /// because re-solving that alpha measured worse (see the README).
+    public static func cutout(from image: CIImage, mode: Mode, edge: EdgeOptions = .crisp,
+                              engine: MatteEngine = .automatic) throws -> ObjectCutout.Result? {
         let mask: CIImage?
+        var finish = edge
         switch mode {
-        case .person: mask = try personMask(for: image)
-        case .subject: mask = try subjectMask(for: image)
+        case .person:
+            mask = try personMask(for: image, engine: engine)
+            if try usesModel(engine) { finish = .forModel(edge) }
+        case .subject:
+            mask = try subjectMask(for: image, engine: engine)
+            if try usesModel(engine) { finish = .forModel(edge) }
         }
         guard let mask else { return nil }
-        return MaskComposite.cutout(from: image, mask: mask, edge: edge, context: context)
+        return MaskComposite.cutout(from: image, mask: mask, edge: finish, context: context)
     }
 
     /// A cutout from an already-computed matte mask — so a caller that also
@@ -97,5 +174,5 @@ public enum Matte {
     }
 
     /// CIContext is documented thread-safe; one shared context for mattes.
-    nonisolated(unsafe) private static let context = CIContext()
+    private static let context = CIContext()
 }

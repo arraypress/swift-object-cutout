@@ -74,4 +74,14 @@ public struct EdgeOptions: Sendable, Equatable {
 
     /// The default: crisp, not choked.
     public static let crisp = EdgeOptions()
+
+    /// The finish for a mask from the downloaded subject model: `.crisp`
+    /// becomes `.soft` — the model's own alpha, decontaminated — and any
+    /// other finish and the choke are kept. Measured on AIM-500 (true
+    /// alpha): re-solving BiRefNet's alpha from colour raised SAD on
+    /// objects from 23.4 to 30.7; Vision's softer mask is what crisp helps.
+    public static func forModel(_ options: EdgeOptions) -> EdgeOptions {
+        guard options.edge == .crisp else { return options }
+        return EdgeOptions(edge: .soft, choke: options.choke)
+    }
 }
