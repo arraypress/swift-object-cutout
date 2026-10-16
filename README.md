@@ -75,15 +75,22 @@ pixels kept opaque; *holes* the share of solid subject pixels lost.
 | Subject | 1.2.1 width | crisp width | 1.2.1 spill | crisp spill | 1.2.1 hair | crisp hair | crisp holes |
 |---|---|---|---|---|---|---|---|
 | disc on green | 21.4 | 0.9 | 0.98 | 0.03 | – | – | 0.00 % |
-| figure, sky | 27.9 | 1.0 | 0.96 | 0.08 | 0.86 | 0.96 | 0.09 % |
-| curls, magenta | 29.4 | 1.1 | 0.86 | 0.15 | 0.74 | 0.85 | 0.09 % |
+| figure, sky | 27.9 | 1.0 | 0.96 | 0.09 | 0.86 | 0.95 | 0.09 % |
+| curls, magenta | 29.4 | 1.1 | 0.86 | 0.18 | 0.74 | 0.84 | 0.09 % |
 | mug, dark red | 20.1 | 0.5 | 0.99 | 0.01 | – | – | 0.00 % |
-| pale on off-white | 19.6 | 1.6 | 0.84 | 0.09 | – | – | 0.90 % |
+| pale on off-white | 19.6 | 0.8 | 0.84 | 0.11 | – | – | 0.27 % |
 
 `soft` measured 5–6 px wide with spill 0.06–0.35; `feather:4` 12–14 px,
 spill 0.03–0.15. The pale box is the hard case — subject and background
-nearly the same colour — and the one where crisp loses a little (0.9 % of its
-pixels, at the edge, against 0.7 % for 1.2.1). Processing is on the CPU, on
+nearly the same colour (0.27 % of its pixels lost at the edge, against 0.67 %
+for 1.2.1).
+
+1.3.1: on a generated portrait (grey hair against a grey wall) 1.3.0's gap
+search punched blotches into the hair where its grey matched the wall. Gaps
+are now looked for only where subject and background differ by 0.2 or more,
+and only thin ones (a few pixels, found by an opening) count — a wide patch of
+the background's colour inside the mask is the subject. The colour solve at
+the edge needs 0.15 of separation (was 0.1). Processing is on the CPU, on
 plain pixel buffers: deterministic, 0.2–0.4 s at 1536² in a release build.
 
 ## License

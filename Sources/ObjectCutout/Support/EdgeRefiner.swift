@@ -39,13 +39,15 @@ enum EdgeRefiner {
     static let outside: UInt8 = 5
     /// Colours closer than this (sRGB, 0…1 per channel) cannot be told
     /// apart: the colour solve is skipped and the mask is trusted.
-    static let separation = 0.1
+    static let separation = 0.15
     /// The share of the subject–background distance a pixel may sit off the
     /// line between them before the two-colour model stops being trusted.
     static let residualLimit = 0.5
     /// Inside the mask, a pixel this close to the background beside it (sRGB
     /// distance) is the background showing through a gap.
     static let gapDistance = 0.08
+    /// Gaps are only looked for where the subject's and the background's colours lie this far apart.
+    static let gapSeparation = 0.2
     /// A background sample this far from its neighbourhood's mean is not background.
     static let outlier = 0.15
 
@@ -83,9 +85,25 @@ enum EdgeRefiner {
             var gaps = [Bool](repeating: false, count: n)
             var found = false
             for i in 0..<n where near[i] && !band[i] && mask[i] >= 128 {
-                guard let bg = estimates.mean(x: i % width, y: i / width, inside: false) else { continue }
+                let x = i % width, y = i / width
+                guard let bg = estimates.mean(x: x, y: y, inside: false), let fg = estimates.mean(x: x, y: y, inside: true) else { continue }
+                // Only where subject and background are far enough apart to tell a gap from the subject.
+                let sr = fg.0 - bg.0, sg = fg.1 - bg.1, sb = fg.2 - bg.2
+                guard sr * sr + sg * sg + sb * sb >= Float(gapSeparation * gapSeparation) else { continue }
                 let dr = Float(rgba[i * 4]) / 255 - bg.0, dg = Float(rgba[i * 4 + 1]) / 255 - bg.1, db = Float(rgba[i * 4 + 2]) / 255 - bg.2
                 if dr * dr + dg * dg + db * db < Float(gapDistance * gapDistance) { gaps[i] = true; found = true }
+            }
+            if found {
+                // A gap is thin: a few pixels between strands. A wide patch of
+                // the background's colour inside the mask is the subject (grey
+                // hair against a grey wall, a white shirt on white): an opening
+                // finds the wide ones, and they are kept.
+                let thin = max(2, min(width, height) / 400)
+                let wide = dilate(erode(gaps, radius: thin, width: width, height: height), radius: thin, width: width, height: height)
+                found = false
+                for i in 0..<n where gaps[i] {
+                    if wide[i] { gaps[i] = false } else { found = true }
+                }
             }
             if found {
                 let grown = dilate(gaps, radius: 2, width: width, height: height)
@@ -216,6 +234,11 @@ enum EdgeRefiner {
         }
         let across = pass(marks, count: width, step: 1, lines: height, lineStride: width)
         return pass(across, count: height, step: width, lines: width, lineStride: 1)
+    }
+
+    /// `marks` shrunk by `radius` pixels (a square): what survives has a square of marks round it.
+    static func erode(_ marks: [Bool], radius: Int, width: Int, height: Int) -> [Bool] {
+        dilate(marks.map { !$0 }, radius: radius, width: width, height: height).map { !$0 }
     }
 
     /// `alpha` eroded by `radius` pixels (a square): each value the least in its window.
