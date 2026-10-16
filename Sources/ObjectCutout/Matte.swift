@@ -57,20 +57,32 @@ public enum Matte {
 
     /// The matte as a cutout — the same edge treatment as the click path,
     /// so a person matte and a SAM sticker read as one tool's work.
-    public static func cutout(from image: CIImage, mode: Mode, feather: CGFloat? = nil) throws -> ObjectCutout.Result? {
+    public static func cutout(from image: CIImage, mode: Mode, edge: EdgeOptions = .crisp) throws -> ObjectCutout.Result? {
         let mask: CIImage?
         switch mode {
         case .person: mask = try personMask(for: image)
         case .subject: mask = try subjectMask(for: image)
         }
         guard let mask else { return nil }
-        return MaskComposite.cutout(from: image, mask: mask, feather: feather, context: context)
+        return MaskComposite.cutout(from: image, mask: mask, edge: edge, context: context)
     }
 
     /// A cutout from an already-computed matte mask — so a caller that also
     /// wants the mask itself segments once, not twice.
-    public static func cutout(from image: CIImage, mask: CIImage, feather: CGFloat? = nil) -> ObjectCutout.Result? {
-        MaskComposite.cutout(from: image, mask: mask, feather: feather, context: context)
+    public static func cutout(from image: CIImage, mask: CIImage, edge: EdgeOptions = .crisp) -> ObjectCutout.Result? {
+        MaskComposite.cutout(from: image, mask: mask, edge: edge, context: context)
+    }
+
+    /// The 1.2 form: `feather` `nil` now means the crisp edge, a number a
+    /// feathered one — both decontaminated.
+    @available(*, deprecated, message: "use cutout(from:mode:edge:)")
+    public static func cutout(from image: CIImage, mode: Mode, feather: CGFloat?) throws -> ObjectCutout.Result? {
+        try cutout(from: image, mode: mode, edge: EdgeOptions(feather: feather))
+    }
+
+    @available(*, deprecated, message: "use cutout(from:mask:edge:)")
+    public static func cutout(from image: CIImage, mask: CIImage, feather: CGFloat?) -> ObjectCutout.Result? {
+        cutout(from: image, mask: mask, edge: EdgeOptions(feather: feather))
     }
 
     /// Vision's masks come back at analysis resolution (person) or image
