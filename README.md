@@ -19,7 +19,8 @@ if let r = ObjectCutout(segmenter: seg).cutout(from: image, at: CGPoint(x: 0.5, 
 Models: `apple/coreml-sam2.1-tiny` on Hugging Face (~76 MB, not committed) for the click;
 `arraypress/cutout-birefnet` (463 MB) for the subject model.
 Requirements: macOS 26 / iOS 26, Swift 6.2; the subject model needs macOS 27 / iOS 27 (Core AI)
-and falls back to Vision below that.
+and falls back to Vision below that. The iOS Simulator SDK has no Core AI: there the model path is
+compiled out (`#if canImport(CoreAI)`), `SubjectModel.runsHere` is false and `Matte` uses Vision.
 
 ## The subject model (1.4) — BiRefNet on Core AI
 

@@ -14,7 +14,9 @@
 //
 //  1.4: the subject comes from the downloaded model (BiRefNet on Core AI)
 //  wherever it is installed and the OS can run it, and from Vision
-//  otherwise — `MatteEngine` chooses explicitly.
+//  otherwise — `MatteEngine` chooses explicitly. Where the SDK has no
+//  Core AI (the iOS Simulator) the model path is compiled out and Vision
+//  lifts the subject.
 //
 
 import CoreImage
@@ -41,9 +43,7 @@ public enum Matte {
     ///   elsewhere Vision's person mask alone.
     public static func personMask(for image: CIImage, engine: MatteEngine = .automatic) throws -> CIImage? {
         guard let people = try visionPersonMask(for: image) else { return nil }
-        if #available(macOS 27, iOS 27, *), try usesModel(engine) {
-            let url = SubjectModel.installedURL
-            let modelled = try Blocking.run { try await SubjectMatter.shared(at: url).mask(for: image) }
+        if let modelled = try modelMask(for: image, engine: engine) {
             return nonEmpty(gated(modelled, byPeople: people, extent: image.extent), extent: image.extent)
         }
         return people
@@ -81,12 +81,24 @@ public enum Matte {
     /// - Throws: ``MatteError`` when the model is asked for (or installed)
     ///   and cannot run; Vision's errors as they come.
     public static func subjectMask(for image: CIImage, engine: MatteEngine = .automatic) throws -> CIImage? {
-        if #available(macOS 27, iOS 27, *), try usesModel(engine) {
-            let url = SubjectModel.installedURL
-            let mask = try Blocking.run { try await SubjectMatter.shared(at: url).mask(for: image) }
+        if let mask = try modelMask(for: image, engine: engine) {
             return nonEmpty(mask, extent: image.extent)
         }
         return try visionSubjectMask(for: image)
+    }
+
+    /// The downloaded model's mask over `image`'s extent, or `nil` when
+    /// `engine` does not put the subject to it here — always `nil` where
+    /// the SDK has no Core AI (the iOS Simulator), so Vision answers.
+    static func modelMask(for image: CIImage, engine: MatteEngine) throws -> CIImage? {
+        guard try usesModel(engine) else { return nil }
+        #if canImport(CoreAI)
+        if #available(macOS 27, iOS 27, *) {
+            let url = SubjectModel.installedURL
+            return try Blocking.run { try await SubjectMatter.shared(at: url).mask(for: image) }
+        }
+        #endif
+        return nil
     }
 
     /// Whether `engine` puts the subject to the downloaded model here.
@@ -94,13 +106,12 @@ public enum Matte {
     /// - Throws: ``MatteError/modelUnavailable(_:)`` when the model is asked
     ///   for by name and is not installed, or the OS cannot run it.
     public static func usesModel(_ engine: MatteEngine) throws(MatteError) -> Bool {
-        let runs: Bool
-        if #available(macOS 27, iOS 27, *) { runs = true } else { runs = false }
+        let runs = SubjectModel.runsHere
         switch engine {
         case .vision: return false
         case .automatic: return runs && SubjectModel.isInstalled
         case .model:
-            guard runs else { throw .modelUnavailable("the subject model runs on Core AI: macOS 27 or iOS 27") }
+            guard runs else { throw .modelUnavailable("the subject model runs on Core AI: macOS 27 or iOS 27, not the Simulator") }
             guard SubjectModel.isInstalled else { throw .modelUnavailable("not installed at \(SubjectModel.installedURL.path)") }
             return true
         }

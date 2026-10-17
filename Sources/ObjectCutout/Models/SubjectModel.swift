@@ -44,6 +44,15 @@ public enum SubjectModel {
             .appendingPathComponent(assetName, isDirectory: true)
     }
 
+    /// Whether this build and OS can run the model at all: Core AI in the
+    /// SDK (the iOS Simulator has none) and macOS 27 / iOS 27 at run time.
+    public static var runsHere: Bool {
+        #if canImport(CoreAI)
+        if #available(macOS 27, iOS 27, *) { return true }
+        #endif
+        return false
+    }
+
     /// Whether the asset is installed where ``installedURL`` says.
     public static var isInstalled: Bool {
         FileManager.default.fileExists(atPath: installedURL.appendingPathComponent("main.hash").path)

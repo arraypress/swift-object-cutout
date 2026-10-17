@@ -11,7 +11,11 @@
 //  Load it once and reuse it: the first load in a program compiles the
 //  model for this Mac (cached by the OS after that).
 //
+//  Compiled only where the SDK has Core AI: the iOS Simulator does not, and
+//  there `Matte` lifts the subject with Vision.
+//
 
+#if canImport(CoreAI)
 import CoreAI
 import CoreGraphics
 import CoreImage
@@ -142,3 +146,5 @@ actor SharedMatters {
         }
     }
 }
+
+#endif

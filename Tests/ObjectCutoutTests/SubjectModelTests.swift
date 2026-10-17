@@ -67,8 +67,8 @@ struct SubjectModelTests {
     @Test("Vision is never the model; the model by name needs it installed")
     func engineChoice() throws {
         #expect(try Matte.usesModel(.vision) == false)
-        #expect(try Matte.usesModel(.automatic) == SubjectModel.isInstalled)
-        if SubjectModel.isInstalled {
+        #expect(try Matte.usesModel(.automatic) == (SubjectModel.runsHere && SubjectModel.isInstalled))
+        if SubjectModel.runsHere && SubjectModel.isInstalled {
             #expect(try Matte.usesModel(.model))
         } else {
             #expect(throws: MatteError.self) { try Matte.usesModel(.model) }
@@ -77,6 +77,7 @@ struct SubjectModelTests {
         #expect(SubjectModel.installedURL.deletingLastPathComponent().lastPathComponent == SubjectModel.sharedFolder)
     }
 
+    #if canImport(CoreAI)
     @Test("A missing asset is a modelUnavailable error, not a crash")
     @available(macOS 27, iOS 27, *)
     func missingAsset() async {
@@ -112,4 +113,5 @@ struct SubjectModelTests {
         let viaMatte = try #require(try Matte.subjectMask(for: image, engine: .model))
         #expect(viaMatte.extent == image.extent)
     }
+    #endif
 }
