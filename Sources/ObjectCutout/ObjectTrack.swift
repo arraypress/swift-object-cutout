@@ -28,12 +28,14 @@ public struct ObjectTrackFrame: Codable, Equatable, Sendable {
 /// Follows a clicked object through a video by re-segmenting each sampled frame
 /// with the point riding the previous frame's mask centroid.
 ///
-/// Apple's Core ML SAM 2 is the image path (no memory module), so this is
-/// point-propagation tracking — great for a cutout sticker that follows an
-/// object; it can lose fast-moving or occluded objects.
+/// SAM 2's image path (no memory module), so this is point-propagation
+/// tracking — great for a cutout sticker that follows an object; it can lose
+/// fast-moving or occluded objects.
 public enum SAM2VideoTracker {
 
+    #if canImport(CoreAI)
     /// Tracks the object at `startPoint` (normalized) from `startTime`.
+    @available(macOS 27, iOS 27, *)
     public static func track(
         videoURL: URL,
         startPoint: CGPoint,
@@ -67,7 +69,7 @@ public enum SAM2VideoTracker {
             // something there, and the track rides it confidently wrong.
             // Reject low-confidence masks and implausible centroid jumps;
             // after a couple of consecutive misses, the object is gone — stop.
-            if let (mask, score) = segmenter.maskWithScore(for: image, at: point),
+            if let (mask, score) = try? await segmenter.maskWithScore(for: image, at: point),
                score >= 0.5,
                let (center, bounds) = analyze(mask: mask, extent: image.extent),
                frames.isEmpty || hypot(center.x - point.x, center.y - point.y) < 0.35 {
@@ -82,6 +84,7 @@ public enum SAM2VideoTracker {
         }
         return smoothed(frames)
     }
+    #endif
 
     /// One context for every analyze() call — a fresh CIContext per tracked
     /// frame was a new Metal pipeline cache 4×/sec.

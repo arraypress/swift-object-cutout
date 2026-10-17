@@ -1,26 +1,49 @@
 # swift-object-cutout
 
 Tap any object in an image → a crisp, transparent-background **cutout** — on-device
-and license-clean, via **SAM 2** (Segment Anything 2, Apache-2.0; Apple's Core ML
-conversion). Unlike automatic subject-lift, you choose *which* object with a click.
+and license-clean, via **SAM 2.1 tiny** (Segment Anything 2, Meta, Apache-2.0), exported to
+Core AI. Unlike automatic subject-lift, you choose *which* object with a click.
 
-- `SAM2Segmenter` — wraps the three SAM 2 tiny Core ML models (image encoder,
-  prompt encoder, mask decoder); `mask(for:at:)` runs the pipeline from one click.
-- `ObjectCutout` — turns the mask into a transparent-background cutout + the tight
+- `SAM2Segmenter` — the click model (one Core AI asset, `encode` + `decode`):
+  `maskWithScore(for:at:)` / `cutout(from:at:)` from one click, or `encode` once and
+  `predict` per click (~5 ms each).
+- `ObjectCutout` — turns a mask into a transparent-background cutout + the tight
   content bounds (crop there for a sticker).
 
 ```swift
-let seg = try SAM2Segmenter(encoderURL: …, promptEncoderURL: …, decoderURL: …)
-if let r = ObjectCutout(segmenter: seg).cutout(from: image, at: CGPoint(x: 0.5, y: 0.4)) {
+let seg = try await SAM2Segmenter.shared()        // ClickModel.installedURL
+if let r = try await seg.cutout(from: image, at: CGPoint(x: 0.5, y: 0.4)) {
     let sticker = r.image.cropped(to: r.bounds)   // transparent-bg cutout
 }
 ```
 
-Models: `apple/coreml-sam2.1-tiny` on Hugging Face (~76 MB, not committed) for the click;
-`arraypress/cutout-birefnet` (463 MB) for the subject model.
-Requirements: macOS 26 / iOS 26, Swift 6.2; the subject model needs macOS 27 / iOS 27 (Core AI)
-and falls back to Vision below that. The iOS Simulator SDK has no Core AI: there the model path is
-compiled out (`#if canImport(CoreAI)`), `SubjectModel.runsHere` is false and `Matte` uses Vision.
+Models (not committed; the library finds them, `cutout` downloads them on first use):
+[arraypress/cutout-sam2-tiny](https://huggingface.co/arraypress/cutout-sam2-tiny) (63 MB) for
+the click, [arraypress/cutout-birefnet](https://huggingface.co/arraypress/cutout-birefnet)
+(463 MB) for the subject model.
+Requirements: macOS 26 / iOS 26, Swift 6.2; the click and subject models need macOS 27 / iOS 27
+(Core AI), and the subject falls back to Vision below that. The iOS Simulator SDK has no Core AI:
+there both model paths are compiled out (`#if canImport(CoreAI)`), `SubjectModel.runsHere` is
+false and `Matte` uses Vision.
+
+## The click model (1.5) — SAM 2.1 tiny on Core AI
+
+1.5 replaces Apple's three-part Core ML conversion (`apple/coreml-sam2.1-tiny`) with our own
+Core AI export of the official SAM 2.1 tiny checkpoint (`Tools/export_sam2.py`, nothing in the
+network rewritten), installed at `~/Library/Application Support/cutout-sam2-tiny/`. Measured on
+60 clicks over 30 generated pictures (20 AI-generated rooms, 10 synthetic shape scenes),
+against the PyTorch original in float32 on the same pixels:
+
+| Runtime | Chosen-mask IoU, mean | worst | Clicks ≥ 0.99 | Same mask chosen | Score error, worst |
+|---|---|---|---|---|---|
+| Core AI float16 (1.5) | 0.9996 | 0.9959 | 60 of 60 | 60 of 60 | 0.006 |
+| Apple's Core ML FLOAT16 (1.4) | 0.968 | 0.500 | 34 of 60 | 56 of 60 | 0.22 |
+
+M3 Max, GPU: `encode` 0.15 s, `decode` 5 ms, first load (compile) well under a second, a
+60 MB compiled copy. Through `cutout` a click run takes 0.6–1.0 s from start to finish
+(4.5 s with Core ML, mostly loading); a 30-picture folder 0.51 s a picture (0.42 s), peak 1.2 GB
+(1.4 GB). Needs macOS 27 / iOS 27; where the SDK has no Core AI (the iOS Simulator) the click
+path is compiled out. `CUTOUT_SAM2_LIVE=1 swift test` runs the real model when installed.
 
 ## The subject model (1.4) — BiRefNet on Core AI
 
@@ -84,7 +107,7 @@ subject model is not installed): `personMask` /
 remove-the-background case a torso click answers wrongly — it returns
 the garment), and `.subject` lifts whatever the system judges salient.
 Both share the click path's edge treatment, and neither needs the SAM
-models.
+model.
 
 ```swift
 if let r = try Matte.cutout(from: image, mode: .person) {

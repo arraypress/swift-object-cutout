@@ -34,6 +34,14 @@ enum MattePixels {
         return planar(rgbx: pixels, count: side * side)
     }
 
+    /// `image` over its integral extent as an sRGB `CGImage`, or `nil` when
+    /// it is empty, infinite or cannot be rendered.
+    static func render(_ image: CIImage, context: CIContext) -> CGImage? {
+        let extent = image.extent.integral
+        guard extent.width >= 1, extent.height >= 1, !extent.isInfinite else { return nil }
+        return context.createCGImage(image, from: extent, format: .RGBA8, colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
+    }
+
     /// RGBX8 (any fourth byte) as planar float RGB in 0…1.
     static func planar(rgbx: [UInt8], count: Int) -> [Float] {
         var out = [Float](repeating: 0, count: count * 3)

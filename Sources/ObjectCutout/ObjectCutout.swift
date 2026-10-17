@@ -9,17 +9,15 @@ import CoreGraphics
 import CoreImage
 import Foundation
 
-/// Tap a point in an image, get a transparent-background cutout of that object.
-/// Wraps ``SAM2Segmenter`` and turns its mask into an alpha cutout plus the
-/// tight content rect (for making a sticker).
+/// A mask made into a cutout: the object on transparency plus its tight
+/// content rect (for making a sticker). The click itself is
+/// ``SAM2Segmenter/cutout(from:at:edge:)``; the built-in mattes are
+/// ``Matte/cutout(from:mode:edge:engine:)``.
 public struct ObjectCutout: Sendable {
 
-    public let segmenter: SAM2Segmenter
     private let ciContext = CIContext()
 
-    public init(segmenter: SAM2Segmenter) {
-        self.segmenter = segmenter
-    }
+    public init() {}
 
     /// A cutout: the object on transparency (full extent) + its tight bounds.
     public struct Result: Sendable {
@@ -29,24 +27,10 @@ public struct ObjectCutout: Sendable {
         public let bounds: CGRect
     }
 
-    /// Cuts out the object at `point` (normalized `0…1`, top-left), its
-    /// edge finished as `edge` asks (crisp and decontaminated by default).
-    public func cutout(from image: CIImage, at point: CGPoint, edge: EdgeOptions = .crisp) -> Result? {
-        guard let mask = segmenter.mask(for: image, at: point) else { return nil }
-        return cutout(from: image, mask: mask, edge: edge)
-    }
-
-    /// Cuts out using an already-computed `mask` (avoids a second segmentation
-    /// when the caller also needs the mask, e.g. for a track centroid).
+    /// Cuts out using an already-computed `mask` (soft grey over the image's
+    /// extent, white = object), its edge finished as `edge` asks.
     public func cutout(from image: CIImage, mask maskInput: CIImage, edge: EdgeOptions = .crisp) -> Result? {
         MaskComposite.cutout(from: image, mask: maskInput, edge: edge, context: ciContext)
-    }
-
-    /// The 1.2 form: `feather` `nil` now means the crisp edge, a number a
-    /// feathered one — both decontaminated.
-    @available(*, deprecated, message: "use cutout(from:at:edge:)")
-    public func cutout(from image: CIImage, at point: CGPoint, feather: CGFloat?) -> Result? {
-        cutout(from: image, at: point, edge: EdgeOptions(feather: feather))
     }
 
     @available(*, deprecated, message: "use cutout(from:mask:edge:)")

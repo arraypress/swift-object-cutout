@@ -11,57 +11,71 @@ import Testing
 @Suite("Object cutout")
 struct ObjectCutoutTests {
 
-    private func env(_ k: String) -> String? { ProcessInfo.processInfo.environment[k] }
-
-    @Test("Cut out the object at a click and write a PNG",
-          .enabled(if: ProcessInfo.processInfo.environment["SAM2_RENDER"] != nil))
-    func cutoutRender() throws {
-        guard let dir = env("SAM2_DIR") else { print("[skip] set SAM2_DIR"); return }
-        let base = URL(fileURLWithPath: dir)
-        let seg = try SAM2Segmenter(
-            encoderURL: base.appendingPathComponent("SAM2_1TinyImageEncoderFLOAT16.mlpackage"),
-            promptEncoderURL: base.appendingPathComponent("SAM2_1TinyPromptEncoderFLOAT16.mlpackage"),
-            decoderURL: base.appendingPathComponent("SAM2_1TinyMaskDecoderFLOAT16.mlpackage"))
-
-        let imgPath = env("SAM2_IMAGE") ?? (NSHomeDirectory() + "/Downloads/depth_frame.png")
-        guard let frame = CIImage(contentsOf: URL(fileURLWithPath: imgPath)) else { print("[skip] no image"); return }
-
-        let cutout = ObjectCutout(segmenter: seg)
-        let t0 = Date().timeIntervalSinceReferenceDate
-        guard let result = cutout.cutout(from: frame, at: CGPoint(x: 0.5, y: 0.42)) else {
-            Issue.record("no cutout"); return
-        }
-        let ms = (Date().timeIntervalSinceReferenceDate - t0) * 1000
-        print("CUTOUT bounds \(result.bounds) in \(Int(ms))ms")
-
-        let cropped = result.image.cropped(to: result.bounds)
-        let ctx = CIContext()
-        try ctx.writePNGRepresentation(of: cropped,
-                                       to: URL(fileURLWithPath: NSHomeDirectory() + "/Downloads/sam2_cutout.png"),
-                                       format: .RGBA8, colorSpace: CGColorSpaceCreateDeviceRGB())
-        print("WROTE ~/Downloads/sam2_cutout.png")
+    @Test("The best of the three masks is the highest score, the first on a tie")
+    func bestMask() {
+        #expect(ClickMask.best([0.1, 0.9, 0.5]) == 1)
+        #expect(ClickMask.best([0.7, 0.7, 0.2]) == 0)
+        #expect(ClickMask.best([]) == nil)
     }
 
-    @Test("Track an object across frames",
-          .enabled(if: ProcessInfo.processInfo.environment["SAM2_RENDER"] != nil))
-    func trackObject() async throws {
-        guard let dir = env("SAM2_DIR") else { print("[skip]"); return }
-        let base = URL(fileURLWithPath: dir)
-        let seg = try SAM2Segmenter(
-            encoderURL: base.appendingPathComponent("SAM2_1TinyImageEncoderFLOAT16.mlpackage"),
-            promptEncoderURL: base.appendingPathComponent("SAM2_1TinyPromptEncoderFLOAT16.mlpackage"),
-            decoderURL: base.appendingPathComponent("SAM2_1TinyMaskDecoderFLOAT16.mlpackage"))
-        let video = URL(fileURLWithPath: env("SAM2_VIDEO") ?? (NSHomeDirectory() + "/Downloads/body_test.mp4"))
-        guard FileManager.default.fileExists(atPath: video.path) else { print("[skip] no video"); return }
+    @Test("A logit map lands on the picture's extent the right way up, ramped from the boundary")
+    func clickMaskOrientation() throws {
+        let side = 4, count = side * side
+        // Channel 1: top two rows strongly on, bottom two off; channels 0 and 2 empty.
+        var logits = [Float](repeating: -10, count: 3 * count)
+        for i in 0..<(2 * side) { logits[count + i] = 10 }
+        let extent = CGRect(x: 10, y: 20, width: 100, height: 60)
+        let mask = try #require(ClickMask.image(logits: logits, index: 1, side: side, extent: extent))
+        #expect(mask.extent == extent)
+        var buf = [UInt8](repeating: 0, count: 100 * 60 * 4)
+        CIContext().render(mask, toBitmap: &buf, rowBytes: 400, bounds: extent, format: .RGBA8, colorSpace: nil)
+        // Lanczos rings a little at a 4-pixel map's edge; well inside each half it is settled.
+        #expect(buf[(12 * 100 + 50) * 4] > 240, "top of the picture is the object")
+        #expect(buf[(48 * 100 + 50) * 4] < 15, "bottom is not")
+        // A channel that is not there is no mask.
+        #expect(ClickMask.image(logits: logits, index: 3, side: side, extent: extent) == nil)
+    }
 
-        let track = try await SAM2VideoTracker.track(videoURL: video, startPoint: CGPoint(x: 0.5, y: 0.42), using: seg, fps: 1.5)
-        print("TRACK \(track.count) frames; first center \(track.first?.center ?? .zero), last \(track.last?.center ?? .zero)")
-        #expect(track.count >= 2)
-        // The object stays roughly centered (didn't drift off to a corner).
-        if let c = track.last?.center {
-            #expect(c.x > 0.2 && c.x < 0.8 && c.y > 0.1 && c.y < 0.9, "track drifted: \(c)")
+    #if canImport(CoreAI)
+    @Test("A missing click asset is a modelUnavailable error, not a crash")
+    @available(macOS 27, iOS 27, *)
+    func missingClickAsset() async {
+        await #expect(throws: MatteError.self) {
+            _ = try await SAM2Segmenter(contentsOf: URL(fileURLWithPath: "/nonexistent/cutout-sam2-tiny.aimodel"))
         }
     }
+
+    @Test("The real click model lifts the disc it is clicked on",
+          .enabled(if: ProcessInfo.processInfo.environment["CUTOUT_SAM2_LIVE"] != nil && ClickModel.isInstalled))
+    @available(macOS 27, iOS 27, *)
+    func liveClick() async throws {
+        let (image, _) = EdgeTests.scene()
+        let segmenter = try await SAM2Segmenter.shared()
+        let found = try #require(try await segmenter.maskWithScore(for: image, at: CGPoint(x: 0.5, y: 0.5)))
+        #expect(found.score > 0.8, "score \(found.score)")
+        let size = EdgeTests.size
+        var buf = [UInt8](repeating: 0, count: size * size * 4)
+        CIContext().render(found.mask, toBitmap: &buf, rowBytes: size * 4, bounds: image.extent, format: .RGBA8, colorSpace: nil)
+        var inter = 0, union = 0
+        for y in 0..<size {
+            for x in 0..<size {
+                let dx = Double(x) + 0.5 - 128, dy = Double(y) + 0.5 - 128
+                let truth = dx * dx + dy * dy <= 64 * 64, hit = buf[(y * size + x) * 4] > 127
+                if truth && hit { inter += 1 }
+                if truth || hit { union += 1 }
+            }
+        }
+        #expect(Double(inter) / Double(max(union, 1)) > 0.95)
+        // One encoding, two clicks: the background click is not the disc.
+        let encoding = try await segmenter.encode(image)
+        let disc = try await segmenter.predict(encoding, at: CGPoint(x: 0.5, y: 0.5))
+        let corner = try await segmenter.predict(encoding, at: CGPoint(x: 0.05, y: 0.05))
+        #expect(disc.logits[disc.best * 65536 + 128 * 256 + 128] > 0)
+        #expect(corner.logits[corner.best * 65536 + 128 * 256 + 128] < 0)
+        let cut = try #require(try await segmenter.cutout(from: image, at: CGPoint(x: 0.5, y: 0.5)))
+        #expect(cut.bounds.width > 100 && cut.bounds.width < 160)
+    }
+    #endif
 
     /// The built-in mattes: a person photo yields a whole figure (not a
     /// garment), the subject lift finds the same figure, and a flat image

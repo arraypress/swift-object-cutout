@@ -99,9 +99,7 @@ public final class SubjectMatter: Sendable {
     /// The subject's soft matte over `image`'s extent.
     public func mask(for image: CIImage) async throws(MatteError) -> CIImage {
         let extent = image.extent.integral
-        guard extent.width >= 1, extent.height >= 1, !extent.isInfinite,
-              let picture = context.createCGImage(image, from: extent, format: .RGBA8,
-                                                  colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!) else {
+        guard let picture = MattePixels.render(image, context: context) else {
             throw .imageUnreadable("the image could not be rendered")
         }
         return try await mask(for: picture).transformed(by: CGAffineTransform(translationX: extent.minX, y: extent.minY))
@@ -116,35 +114,10 @@ extension SubjectMatter {
     /// The model at `url`, loaded once per program and kept: every later
     /// call — every image of a folder, every layer of a design — reuses it.
     public static func shared(at url: URL = SubjectModel.installedURL) async throws(MatteError) -> SubjectMatter {
-        try await SharedMatters.store.matter(at: url)
+        try await shelf.model(at: url) { try await SubjectMatter(contentsOf: $0) }
     }
-}
 
-/// The loaded models, by path.
-@available(macOS 27, iOS 27, *)
-actor SharedMatters {
-
-    static let store = SharedMatters()
-
-    private var loaded: [URL: SubjectMatter] = [:]
-    private var loading: [URL: Task<SubjectMatter, any Error>] = [:]
-
-    func matter(at url: URL) async throws(MatteError) -> SubjectMatter {
-        let key = url.standardizedFileURL
-        if let matter = loaded[key] { return matter }
-        // One load per path even when several callers ask at once.
-        let task = loading[key] ?? Task { try await SubjectMatter(contentsOf: key) }
-        loading[key] = task
-        do {
-            let matter = try await task.value
-            loaded[key] = matter
-            loading[key] = nil
-            return matter
-        } catch {
-            loading[key] = nil
-            throw (error as? MatteError) ?? .modelUnavailable("\(error)")
-        }
-    }
+    private static let shelf = ModelShelf<SubjectMatter>()
 }
 
 #endif
